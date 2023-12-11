@@ -123,10 +123,16 @@ class Program
             Console.WriteLine("\n-------------------------Extracted Token Information:");
             foreach (var tokenInfo in ExtractedTokenInfos)
             {
+                if (tokenInfo.Audience == "https://graph.microsoft.com/" || tokenInfo.Audience == "00000003-0000-0000-c000-000000000000")
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                }
                 Console.WriteLine(tokenInfo);
+                Console.ResetColor();
             }
-            Console.WriteLine($"\n[*] Found {ExtractedTokenInfos.Count} unique token(s) with interesting audiences and permissions.");
+            Console.WriteLine($"\n[*] Found {ExtractedTokenInfos.Count} unique tokens with interesting audiences and permissions.");
         }
+        
         CleanupDumpFiles();
         Console.WriteLine("[*] Done!");
     }
@@ -171,8 +177,10 @@ class Program
                                 if (!string.IsNullOrEmpty(aud) && KnownAudiences.Contains(aud) && !AudScopeSet.Contains(audScopeKey))
                                 {
                                     AudScopeSet.Add(audScopeKey);
-                                    ExtractedTokenInfos.Add(new TokenInfo(aud, upn, scp, match.Value, processName));
+                                    ExtractedTokenInfos.Add(new TokenInfo(aud, upn, scp, match.Value, processName));                                
+                                    Console.ForegroundColor = ConsoleColor.Green;
                                     Console.WriteLine("[+] Token matches criteria!");
+                                    Console.ResetColor();
                                 }
                             }
                             catch (Exception ex)
