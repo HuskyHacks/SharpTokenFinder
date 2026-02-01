@@ -9,9 +9,6 @@ Run this as a reflective assembly or compile and run the executable. Ensure your
 ## Contributing
 I included a set of M365 app processes and interesting token audiences for the checks, but if you have any battle-tested insights about other M365 app processes/token audiences that are exploitable, feel free to open a PR!
 
-## More info about this technique
-[![More info about this technique](https://img.youtube.com/vi/y4Ue_Es5cGA/0.jpg)](https://www.youtube.com/watch?v=y4Ue_Es5cGA)
-
 ## References
 - Attacking & Defending Azure & M365 - Xintra Training: https://training.xintra.org/view/courses/attacking-and-defending-azure-m365
 - mrd0x original writeup: https://mrd0x.com/stealing-tokens-from-office-applications/
