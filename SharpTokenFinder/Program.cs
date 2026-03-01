@@ -53,7 +53,7 @@ class Program
     const uint PROCESS_VM_READ = 0x0010;
     const string DumpDirectory = "dump";
 
-    static readonly string[] KnownProcesses = { "TEAMS", "WINWORD", "ONENOTE", "POWERPNT", "OUTLOOK", "EXCEL", "ONEDRIVE", "SHAREPOINT" };
+    static readonly string[] KnownProcesses = { "TEAMS", "MS-TEAMS", "OLK", "WINWORD", "ONENOTE", "POWERPNT", "OUTLOOK", "EXCEL", "ONEDRIVE", "SHAREPOINT" };
     static readonly HashSet<string> KnownAudiences = new HashSet<string> { "https://graph.microsoft.com/", "https://outlook.office365.com/", "https://outlook.office.com",
                      "sharepoint.com", "00000003-0000-0000-c000-000000000000"};
 
